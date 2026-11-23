@@ -1,0 +1,25 @@
+{
+  "cutoff": 40,
+  "horizon": 3,
+  "input_rows": 622489,
+  "exact_duplicates": 305,
+  "ambiguous_loans_excluded": 10,
+  "train_rows": 344541,
+  "oot_labeled_rows": 168084,
+  "oot_unknown_labels": 451,
+  "train_bad_rate": 0.08232692190479507,
+  "oot_bad_rate": 0.05142666761857167,
+  "borrowers_in_both": 12735,
+  "metrics": {
+    "logistic": {
+      "auc": 0.6855960011474683,
+      "ks": 0.2815211175254065,
+      "pr_auc_ap": 0.09384820873572289
+    },
+    "histgb": {
+      "auc": 0.7048343401494541,
+      "ks": 0.2983274814465159,
+      "pr_auc_ap": 0.10737157254341723
+    }
+  }
+}
