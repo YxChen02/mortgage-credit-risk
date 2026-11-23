@@ -2,9 +2,20 @@
 
 基于美国住宅抵押贷款面板数据，在每个观测期为仍在贷的借款人估计未来 3 期的违约风险。项目用 SQL 构建时点样本和历史特征，对比逻辑回归与直方图梯度提升树，并通过时间外回测和逐期评分 PSI 评估模型。
 
-## 数据与样本
+## 数据集
 
-使用 [Credit Risk Analytics 发布的 Mortgage 数据集](https://www.creditriskanalytics.net/datasets-private2.html)。原始 CSV 含 622,489 条观测记录，覆盖 60 个匿名化观测期。删除 305 条完全重复记录后，按借款人 ID 和放款期识别贷款。若同一组合在同一期仍有冲突记录，则剔除整个组合，共剔除 10 个组合。
+使用 [Credit Risk Analytics 发布的 Mortgage 数据集](https://www.creditriskanalytics.net/datasets-private2.html)。数据来自美国住宅抵押贷款支持证券（RMBS）的底层贷款组合，约含 5 万名借款人。原始 CSV 有 622,489 条记录、23 列，覆盖 60 个匿名化观测期。每行记录一笔贷款在某一期的状态，同一笔贷款可以跨多期出现。
+
+- **标识与时间**：`id` 为借款人 ID，`orig_time` 为放款期，`time` 为观测期。
+- **放款信息**：`FICO_orig_time` 为放款时的 FICO 评分，`LTV_orig_time` 为放款时的贷款价值比。
+- **贷后表现**：`balance_time` 为期内贷款余额，`LTV_time` 为观测期贷款价值比，`interest_rate_time` 为观测期利率。
+- **事件状态**：`status_time` 的取值为 `0`（未违约且未结清）、`1`（违约）、`2`（结清）。项目用该字段生成未来违约标签。
+
+数据引用：Baesens、Rösch 和 Scheule，*Credit Risk Analytics: Measurement Techniques, Applications, and Examples in SAS*，Wiley，2016。
+
+## 样本构建
+
+删除 305 条完全重复记录后，按借款人 ID 和放款期识别贷款。若同一组合在同一期仍有冲突记录，则剔除整个组合，共剔除 10 个组合。
 
 - **特征**：使用评分时点及此前可得的信息，包括当前余额、贷款价值比（LTV）、放款时 FICO 评分，以及最近三次观测的余额和 LTV 均值。
 - **标签**：未来 3 期内首次违约记为正类。窗口内先提前结清，或到窗口末仍可追踪且未违约，记为负类。其余样本的标签记为缺失。
@@ -28,7 +39,7 @@
 
 ## 复现
 
-从数据发布页下载 Mortgage CSV 压缩包，解压至 `data/mortgage.csv`，然后在仓库根目录运行：
+从发布方下载 [Mortgage CSV 压缩包](https://www.creditriskanalytics.net/uploads/1/9/5/1/19511601/mortgage_csv.rar)，解压至 `data/mortgage.csv`，然后在仓库根目录运行：
 
 ```bash
 python -m pip install -r requirements.txt
