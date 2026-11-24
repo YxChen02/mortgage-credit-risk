@@ -1,4 +1,7 @@
-WITH history AS (
+WITH ordered AS (
+    SELECT *, lead(time) OVER (PARTITION BY id, orig_time ORDER BY time) AS next_period
+    FROM mortgage
+), history AS (
     SELECT *,
         count(*) OVER past AS observed_periods,
         avg(balance_time) OVER past AS mean_balance_3obs,
@@ -6,17 +9,19 @@ WITH history AS (
         lag(balance_time) OVER sequence AS previous_balance,
         min(CASE WHEN status_time IN (1, 2) THEN time END)
             OVER (PARTITION BY id, orig_time) AS event_period,
-        max(time) OVER (PARTITION BY id, orig_time) AS last_seen
-    FROM mortgage
+        min(CASE WHEN next_period IS NULL OR next_period <> time + 1 THEN time END)
+            OVER (PARTITION BY id, orig_time ORDER BY time
+                  ROWS BETWEEN CURRENT ROW AND UNBOUNDED FOLLOWING) AS contiguous_until
+    FROM ordered
     WINDOW sequence AS (PARTITION BY id, orig_time ORDER BY time),
            past AS (PARTITION BY id, orig_time ORDER BY time ROWS BETWEEN 2 PRECEDING AND CURRENT ROW)
 ), labeled AS (
     SELECT *,
         CASE
-            WHEN event_period <= time + :horizon THEN
+            WHEN event_period <= min(time + :horizon, contiguous_until) THEN
                 (SELECT status_time = 1 FROM mortgage AS event
                  WHERE event.id = history.id AND event.orig_time = history.orig_time AND event.time = history.event_period)
-            WHEN last_seen >= time + :horizon THEN 0
+            WHEN contiguous_until >= time + :horizon THEN 0
         END AS target
     FROM history
     WHERE status_time = 0 AND (event_period IS NULL OR event_period > time)

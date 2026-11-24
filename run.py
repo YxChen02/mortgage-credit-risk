@@ -12,6 +12,8 @@ from sklearn.metrics import average_precision_score, roc_auc_score, roc_curve
 from sklearn.pipeline import make_pipeline
 from sklearn.preprocessing import StandardScaler
 
+from woe import fit_woe, transform_woe
+
 
 def score_psi(reference, current):
     cuts = np.unique(np.quantile(reference, np.arange(1, 10) / 10))
@@ -22,6 +24,17 @@ def score_psi(reference, current):
         shares.append(counts / counts.sum())
     expected, actual = shares
     return float(np.sum((actual - expected) * np.log(actual / expected)))
+
+
+def discrimination(target, scores):
+    if target.nunique() < 2:
+        return dict.fromkeys(["auc", "ks", "pr_auc_ap"])
+    fpr, tpr, _ = roc_curve(target, scores)
+    return {
+        "auc": roc_auc_score(target, scores),
+        "ks": float((tpr - fpr).max()),
+        "pr_auc_ap": average_precision_score(target, scores),
+    }
 
 
 def run(csv_path, cutoff, horizon, output, booster):
@@ -69,29 +82,47 @@ def run(csv_path, cutoff, horizon, output, booster):
         models[booster] = HistGradientBoostingClassifier(
             max_iter=150, max_leaf_nodes=15, random_state=42
         )
+    rules, woe_report = fit_woe(train[features], train.target)
+    models["woe_logistic"] = LogisticRegression()
     metrics = {}
+    risk_tiers = []
     monitoring = []
     oot = sample[sample.time > cutoff]
     for name, model in models.items():
-        model.fit(train[features], train.target)
-        reference = model.predict_proba(train[features])[:, 1]
-        scores = model.predict_proba(test[features])[:, 1]
-        fpr, tpr, _ = roc_curve(test.target, scores)
-        metrics[name] = {
-            "auc": roc_auc_score(test.target, scores),
-            "ks": float((tpr - fpr).max()),
-            "pr_auc_ap": average_precision_score(test.target, scores),
-        }
+        def matrix(frame):
+            values = frame[features]
+            return transform_woe(values, rules) if name == "woe_logistic" else values
+
+        model.fit(matrix(train), train.target)
+        reference = model.predict_proba(matrix(train))[:, 1]
+        scores = model.predict_proba(matrix(test))[:, 1]
+        metrics[name] = discrimination(test.target, scores)
+        tier_edges = np.unique(np.quantile(reference, [0.2, 0.4, 0.6, 0.8]))
+        tiers = pd.DataFrame({
+            "tier": np.searchsorted(tier_edges, scores, side="right") + 1,
+            "target": test.target.to_numpy(), "score": scores,
+        })
+        for tier, group in tiers.groupby("tier"):
+            risk_tiers.append({
+                "model": name, "tier": tier, "count": len(group),
+                "bad_rate": group.target.mean(), "mean_score": group.score.mean(),
+            })
         for period, batch in oot.groupby("time"):
-            batch_scores = model.predict_proba(batch[features])[:, 1]
+            batch_scores = model.predict_proba(matrix(batch))[:, 1]
+            known = batch.target.notna().to_numpy()
             monitoring.append({
                 "model": name, "period": period, "count": len(batch),
-                "unknown_labels": int(batch.target.isna().sum()),
+                "known_labels": int(known.sum()),
+                "unknown_labels": int((~known).sum()),
+                "bad_rate": batch.target.mean(),
                 "score_psi": score_psi(reference, batch_scores),
+                **discrimination(batch.target[known], batch_scores[known]),
             })
 
     output.mkdir(parents=True, exist_ok=True)
     pd.DataFrame(monitoring).to_csv(output / "monitoring.csv", index=False)
+    pd.DataFrame(risk_tiers).to_csv(output / "risk_tiers.csv", index=False)
+    woe_report.to_csv(output / "woe_iv.csv", index=False)
     summary = {
         "cutoff": cutoff, "horizon": horizon,
         "input_rows": len(raw), "exact_duplicates": duplicate_rows,
